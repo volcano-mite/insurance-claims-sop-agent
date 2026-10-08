@@ -34,8 +34,8 @@ def describe_hints(hints: dict, intent: str | None = None) -> str:
     text = " ".join(parts)
     if hints.get("case_id"):
         text += f" {hints['case_id']}"
-    if hints.get("month"):
-        text += f" from {MONTH_NAMES[int(hints['month']) - 1]}"
+    if hints.get("month") in range(1, 13):
+        text += f" from {MONTH_NAMES[hints['month'] - 1]}"
         if hints.get("year"):
             text += f" {hints['year']}"
     elif hints.get("year"):
@@ -140,7 +140,7 @@ class Controller:
             s.last_verification = {"matched": result.matched, "mismatched": result.mismatched,
                                    "verified": result.verified}
             s.log("verify_identity", fields=sorted(new), matched=len(result.matched),
-                  mismatched=len(result.mismatched), verified=result.verified)
+                  mismatched=len(result.mismatched), verified=result.verified, failed=result.failed)
             if result.verified:
                 self._on_identity_match(s, ex, plan, result.party_id)
                 return
@@ -179,14 +179,14 @@ class Controller:
             s.log("request_consent", scenario=s.consent_scenario)
             self._await_consent(s, plan, first=True)
             return
-        s.verified_party_id = party_id
+        self._mark_verified(s, party_id)
         self._after_verified(s, ex, plan)
 
     def _await_consent(self, s: Session, plan: TurnPlan, first: bool = False) -> None:
         status = consent.poll(s.consent)
         s.log("poll_consent", status=status, polls=s.consent.polls)
         if status == "approved":
-            s.verified_party_id = s.consent.party_id
+            self._mark_verified(s, s.consent.party_id)
             plan.add("CONSENT_APPROVED")
             self._after_verified(s, Extraction(), plan)
         elif status == "timeout":
@@ -194,6 +194,11 @@ class Controller:
         else:
             plan.add("CONSENT_PENDING", first_request=first,
                      checks_left=len(s.consent.sequence) - s.consent.polls)
+
+    @staticmethod
+    def _mark_verified(s: Session, party_id: str) -> None:
+        s.verified_party_id = party_id
+        s.verified_at_history = max(0, len(s.history) - 1)
 
     def _after_verified(self, s: Session, ex: Extraction, plan: TurnPlan) -> None:
         holder = data.policyholder_by_party(s.verified_party_id)
@@ -233,6 +238,8 @@ class Controller:
             chosen = on_file[0]
         if chosen:
             s.selected_case_id = chosen["case_id"]
+            if chosen["case_id"] not in s.cases_discussed:
+                s.cases_discussed.append(chosen["case_id"])
             s.candidate_case_ids = []
             plan.add("CASE_SELECTED", claim=claims.claim_summary(chosen),
                      matched_from=describe_hints(s.case_hints) if s.case_hints else None)
@@ -255,7 +262,7 @@ class Controller:
                 s.case_hints = {k: v for k, v in s.case_hints.items() if k in ex.case_hints.present()}
                 self._resolve_intent(s, ex, plan)
                 return
-            if ex.wants_to_end or ex.email_decision:
+            if (ex.wants_to_end or ex.email_decision) and not ex.intent:
                 self._enter_post_process(s, ex, plan)
                 return
         intent = ex.intent or s.pending_intent or "general_claim_question"
@@ -263,6 +270,9 @@ class Controller:
             s.topics_discussed.append(intent)
         plan.tools_enabled = True
         plan.add("ANSWER_CASE_QUESTION", case_id=s.selected_case_id, intent=intent)
+        # "...how long will review take? That's all." Answer first, then wrap up in the same turn.
+        if ex.wants_to_end or ex.email_decision:
+            self._enter_post_process(s, ex, plan)
 
     # ------------------------------------------------------------ POST_PROCESS
 

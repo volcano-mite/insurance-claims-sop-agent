@@ -1,7 +1,7 @@
 name: Caller declines the email summary
 turns:
   - say: "Margaret Chen, policy POL-9921, DOB 1985-03-15, SSN last four 4472. What's going on with my auto claim?"
-    expect: {phase: PROCESS_CASE, selected_case: CL-2102}
+    expect: {phase: PROCESS_CASE, selected_case: CL-2102, reply_mentions_any: [open, in progress, progress]}
   - say: "Got it, nothing else."
     expect: {phase: POST_PROCESS}
   - say: "No thanks, no email needed."

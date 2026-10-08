@@ -1,0 +1,8 @@
+name: Mid-case question sent together with "that's all" is answered before the email offer
+turns:
+  - say: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. I'm calling about my denied healthcare claim from January."
+    expect: {phase: PROCESS_CASE, selected_case: CL-2048}
+  - say: "Can I get the money back? And how long will review take once I send everything? That's all."
+    expect: {phase: POST_PROCESS, reply_mentions_all: [week, email], reply_excludes: [will be approved, will be paid, will be reimbursed]}
+  - say: "No thanks, skip the email."
+    expect: {phase: ENDED, email_sent: false}

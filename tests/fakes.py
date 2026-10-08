@@ -14,18 +14,21 @@ def tool_call(name: str, args: dict, id_: str = "call_1"):
 
 
 class FakeLLM:
-    def __init__(self, extractions=None, replies=None, fail_json=False):
+    def __init__(self, extractions=None, replies=None, fail_json=False, email=None):
         self.extractions = list(extractions or [])
         self.replies = list(replies or [])
         self.fail_json = fail_json
+        self.email = email or {"subject": "Your claim CL-2048 summary", "body": "What we discussed: ..."}
         self.chat_calls: list[dict] = []
+        self.json_calls: list[dict] = []
 
     def complete_json(self, model, system, user):
+        self.json_calls.append({"system": system, "user": user})
         if self.fail_json:
             raise LLMError("boom")
         if system == prompts.EXTRACTOR_SYSTEM:
             return self.extractions.pop(0) if self.extractions else {}
-        return {"subject": "Your claim CL-2048 summary", "body": "What we discussed: ..."}
+        return self.email
 
     def chat(self, model, messages, tools=None, temperature=0.7):
         self.chat_calls.append({"messages": messages, "tools": tools})

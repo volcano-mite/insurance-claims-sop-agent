@@ -323,12 +323,12 @@ details.trace[open] summary .chev { transform: rotate(90deg); }
     <div class="logo"><svg class="i"><use href="#i-shield"/></svg></div>
     <div>
       <div class="brand-name">Harbor Mutual Claims</div>
-      <div class="brand-sub">SOP agent · test console</div>
+      <div class="brand-sub">SOP agent · test console · <span id="todayLabel" title="Date used for deadline checks (SOP_TODAY)"></span></div>
     </div>
   </div>
   <div class="top-actions">
     <div class="seg" role="group" aria-label="Policyholder consent simulation">
-      <span class="seg-label">Consent</span>
+      <span class="seg-label" title="Simulated: no real policyholder is contacted">Consent (simulated)</span>
       <button data-consent="default" aria-pressed="true" title="Representative callers: policyholder approves">Approves</button>
       <button data-consent="timeout" aria-pressed="false" title="Representative callers: consent never arrives">Times out</button>
     </div>
@@ -340,6 +340,11 @@ details.trace[open] summary .chev { transform: rotate(90deg); }
         <h3>DeepSeek API key</h3>
         <p id="keyHelp">Kept in server memory for this chat only, and in this browser tab.</p>
         <input class="field" id="apiKey" type="password" placeholder="sk-…" autocomplete="off" spellcheck="false">
+        <div id="accessWrap" hidden>
+          <h3 style="margin-top:12px">Access code</h3>
+          <p>This deployment is protected. Ask the person who shared it for the code.</p>
+          <input class="field" id="accessCode" type="password" placeholder="Access code" autocomplete="off" spellcheck="false">
+        </div>
         <div class="row">
           <button class="btn" id="keyClear">Clear</button>
           <button class="btn primary" id="keySave">Save</button>
@@ -374,7 +379,7 @@ details.trace[open] summary .chev { transform: rotate(90deg); }
 
   <aside class="panel inspector" aria-label="SOP inspector">
     <div class="insp-head">
-      <h2>SOP Inspector</h2><span class="tag">debug view</span><span class="mono" id="sid"></span>
+      <h2>SOP Inspector</h2><span class="tag" id="inspMode">debug view</span><span class="mono" id="sid"></span>
     </div>
     <div class="sec">
       <div class="sec-head"><svg class="i"><use href="#i-flag"/></svg><h3>Workflow</h3></div>
@@ -394,7 +399,7 @@ details.trace[open] summary .chev { transform: rotate(90deg); }
       <div id="guardrails"></div>
     </div>
     <div class="sec">
-      <div class="sec-head"><svg class="i"><use href="#i-mail"/></svg><h3>Email outbox</h3></div>
+      <div class="sec-head"><svg class="i"><use href="#i-mail"/></svg><h3>Test outbox</h3><span class="tag" title="Summaries are written here; nothing is emailed">simulated</span></div>
       <div id="outbox"></div>
     </div>
     <div class="sec">
@@ -411,7 +416,7 @@ details.trace[open] summary .chev { transform: rotate(90deg); }
 const PHASES = [["VERIFY_ID", "Verify ID"], ["RESOLVE_INTENT", "Resolve intent"], ["PROCESS_CASE", "Process case"], ["POST_PROCESS", "Post-process"]];
 const PHASE_PILL = {
   VERIFY_ID: ["Verifying identity", ""], RESOLVE_INTENT: ["Resolving request", ""], PROCESS_CASE: ["Working on claim", ""],
-  POST_PROCESS: ["Wrapping up", ""], ESCALATED: ["Transferred to human", "warn"], ENDED: ["Conversation ended", "ok"],
+  POST_PROCESS: ["Wrapping up", ""], ESCALATED: ["Human handoff (simulated)", "warn"], ENDED: ["Conversation ended", "ok"],
 };
 const FIELDS = [["full_name", "Full name"], ["dob", "Date of birth"], ["phone", "Phone"], ["email", "Email"], ["id_last4", "SSN / ID last 4"]];
 const SCENARIOS = [
@@ -444,9 +449,9 @@ const store = {
 let cfg = null, sessionId = null, busy = false, consent = store.get("consent") || "default", lastState = null, lastMessages = [];
 
 async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : {
-    method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
-  });
+  const headers = {"Content-Type": "application/json"};
+  if (store.get("accessCode")) headers["X-Access-Token"] = store.get("accessCode");
+  const res = await fetch(path, body === undefined ? {headers} : {method: "POST", headers, body: JSON.stringify(body)});
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(data.detail || res.statusText); e.status = res.status; throw e; }
   return data;
@@ -462,6 +467,9 @@ function renderKey() {
     ? "The server already has a key. Enter one here only to override it for this chat."
     : "Required. Kept in server memory for this chat only, and in this browser tab.";
   $("apiKey").value = k;
+  $("accessWrap").hidden = !cfg?.access_required;
+  $("accessCode").value = store.get("accessCode");
+  if (cfg?.access_required && !store.get("accessCode")) { $("keyDot").className = "dot bad"; $("keyLabel").textContent = "Access code"; }
 }
 function togglePop(open) {
   const pop = $("keyPop"); const isOpen = open ?? !pop.classList.contains("open");
@@ -478,8 +486,8 @@ function eventsByTurn(trace) {
   const add = (turn, cls, ic, text) => (out[turn] ||= []).push({cls, ic, text});
   let prevCase = null;
   for (const e of trace) {
-    if (e.event === "verify_identity" && e.mismatched) add(e.turn, "bad", "i-x", "Details did not match records");
-    else if (e.event === "request_consent") add(e.turn, "accent", "i-hourglass", "Consent request sent to policyholder");
+    if (e.event === "verify_identity" && (e.failed || e.mismatched)) add(e.turn, "bad", "i-x", "Details did not match records");
+    else if (e.event === "request_consent") add(e.turn, "accent", "i-hourglass", "Consent request sent to policyholder (simulated)");
     else if (e.event === "poll_consent" && e.status === "approved") add(e.turn, "ok", "i-check", "Policyholder approved consent");
     else if (e.event === "plan") {
       if (e.directives?.includes("VERIFIED")) add(e.turn, "ok", "i-check", "Identity verified");
@@ -492,10 +500,14 @@ function eventsByTurn(trace) {
       if (e.directives?.includes("OFFER_EMAIL_SUMMARY") && !e.directives.includes("ANSWER_CASE_QUESTION")) add(e.turn, "", "i-flag", "Wrap-up");
     }
     else if (e.event === "tool_call") add(e.turn, "", "i-search", `Looked up ${TOOL_LABELS[e.tool] || e.tool}`);
-    else if (e.event === "guard_blocked") add(e.turn, "bad", "i-alert", "Output guard blocked an unsafe reply");
-    else if (e.event === "state_mismatch") add(e.turn, "warn", "i-alert", "Reply contradicted SOP state: regenerated");
-    else if (e.event === "escalate") add(e.turn, "warn", "i-headset", `Transferred to human · ${e.reference}`);
-    else if (e.event === "send_email") add(e.turn, "ok", "i-mail", "Email summary sent");
+    else if (e.event === "guard_blocked") add(e.turn, "bad", "i-alert", "Output guard blocked an unsafe draft");
+    else if (e.event === "ungrounded_reply") add(e.turn, "warn", "i-alert", "Draft stated unsupported facts: regenerated");
+    else if (e.event === "state_mismatch") add(e.turn, "warn", "i-alert", "Draft contradicted SOP state: regenerated");
+    else if (e.event === "pruned_reply") add(e.turn, "warn", "i-alert", `Removed ${e.sentences_removed} unsupported sentence(s)`);
+    else if (e.event === "directive_missing") add(e.turn, "warn", "i-alert", "Draft skipped a required step: regenerated");
+    else if (e.event === "email_check_failed") add(e.turn, "warn", "i-alert", "Email draft failed checks: template used");
+    else if (e.event === "escalate") add(e.turn, "warn", "i-headset", `Human handoff (simulated) · ${e.reference}`);
+    else if (e.event === "send_email") add(e.turn, "ok", "i-mail", "Summary saved to test outbox (not emailed)");
   }
   return out;
 }
@@ -559,9 +571,13 @@ async function send(text) {
     render(data.state);
   } catch (e) {
     renderMessages(lastMessages, lastState);
+    if (e.status === 404) {  // session expired on the server: start over, keep the draft
+      try { await newChat(); } catch {}
+      e.message = "That chat expired, so a new one was started. Press Enter to send your message again.";
+    }
     $("input").value = text; autosize();
     showError(e.message);
-    if (e.status === 400 || e.status === 401) togglePop(true);
+    if (e.status === 401 || e.status === 403 || /API key/.test(e.message)) togglePop(true);
   } finally {
     busy = false; $("send").disabled = false; $("input").focus();
   }
@@ -593,8 +609,8 @@ function render(st) {
     return `<div class="step ${cls}"><div class="knob">${inner}</div><div class="step-label">${label}</div></div>`;
   }).join("");
   $("phaseNotice").innerHTML = st.phase === "ESCALATED"
-    ? `<div class="notice warn">${icon("i-headset")}<div><b>Transferred to a human · ${esc(g.escalation.reference)}</b>${esc(REASONS[g.escalation.reason] || g.escalation.reason)}</div></div>`
-    : st.phase === "ENDED" ? `<div class="notice ok">${icon("i-check")}<div><b>Conversation complete</b>${st.email_decision === "send" ? "Summary emailed to the caller." : "Caller skipped the email summary."}</div></div>` : "";
+    ? `<div class="notice warn">${icon("i-headset")}<div><b>Human handoff (simulated) · ${esc(g.escalation.reference)}</b>${esc(REASONS[g.escalation.reason] || g.escalation.reason)}. No live agent is connected in this demo.</div></div>`
+    : st.phase === "ENDED" ? `<div class="notice ok">${icon("i-check")}<div><b>Conversation complete</b>${st.email_decision === "send" ? "Summary written to the test outbox; no real email is sent." : "Caller skipped the email summary."}</div></div>` : "";
   const [pillText, pillCls] = PHASE_PILL[st.phase];
   $("phasePill").textContent = pillText; $("phasePill").className = "phase-pill " + pillCls;
 
@@ -603,14 +619,12 @@ function render(st) {
   const awaiting = v.consent && v.consent.status === "pending";
   $("verifyTag").innerHTML = v.verified_party_id ? `<span class="tag ok">${icon("i-check")}Verified</span>`
     : awaiting ? `<span class="tag accent">Awaiting consent</span>` : `<span class="tag">Not verified</span>`;
-  const matched = v.verified_party_id ? L.verify_min_fields
-    : FIELDS.filter(([k]) => v.fields_provided[k] && (last.matched || []).includes(k)).length;
   const provided = FIELDS.filter(([k]) => v.fields_provided[k]).length;
   const progress = v.verified_party_id ? L.verify_min_fields : Math.min(provided, L.verify_min_fields);
   const rows = FIELDS.map(([k, label]) => {
     const val = v.fields_provided[k];
     let st_ = "none", sym = "";
-    if (val && (last.matched || []).includes(k)) { st_ = "ok"; sym = icon("i-check"); }
+    if (val && (v.verified_party_id || (last.matched || []).includes(k))) { st_ = "ok"; sym = icon("i-check"); }
     else if (val && (last.mismatched || []).includes(k)) { st_ = "bad"; sym = icon("i-x"); }
     else if (val) { st_ = "pending"; sym = "·"; }
     const declined = (v.declined_fields || []).includes(k);
@@ -624,7 +638,8 @@ function render(st) {
     + `<dl class="kv" style="margin-top:12px">
         <dt>Caller</dt><dd>${v.caller_role ? `<span class="tag">${esc(v.caller_role)}</span>` : `<span class="none">—</span>`}${v.representative ? `<span class="tag">${esc(v.representative)}</span>` : ""}</dd>
         ${v.consent ? `<dt>Consent</dt><dd><span class="tag ${v.consent.status === "approved" ? "ok" : v.consent.status === "timeout" ? "bad" : "accent"}">${esc(v.consent.status)}</span><span class="none">${v.consent.polls}/${v.consent.max_polls} checks</span></dd>` : ""}
-      </dl>`;
+      </dl>`
+    + (st.debug || v.verified_party_id ? "" : `<p class="none" style="margin-top:10px;font-size:12px">Which field matched is not shown before verification, so it can't be used to probe records. Set DEBUG_INSPECTOR=true to see it locally.</p>`);
 
   // memory
   const m = st.memory;
@@ -655,7 +670,8 @@ function render(st) {
 
   // trace
   $("traceCount").textContent = st.trace.length;
-  const evCls = { escalate: "warn", guard_blocked: "bad", state_mismatch: "warn", extraction_error: "bad", responder_error: "bad",
+  const evCls = { escalate: "warn", guard_blocked: "bad", state_mismatch: "warn", directive_missing: "warn", ungrounded_reply: "warn", email_check_failed: "warn",
+    turn_error: "bad", extraction_error: "bad", responder_error: "bad",
     send_email: "ok", verify_identity: "ok", plan: "muted", extraction: "" };
   $("trace").innerHTML = st.trace.slice().reverse().map(e => {
     const {turn, event, ...rest} = e;
@@ -676,8 +692,12 @@ $("input").addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send($("input").value); }
 });
 $("keyBtn").addEventListener("click", () => togglePop());
-$("keySave").addEventListener("click", () => { store.set("apiKey", $("apiKey").value.trim()); renderKey(); togglePop(false); });
-$("keyClear").addEventListener("click", () => { store.set("apiKey", ""); renderKey(); });
+$("keySave").addEventListener("click", () => {
+  store.set("apiKey", $("apiKey").value.trim()); store.set("accessCode", $("accessCode").value.trim());
+  renderKey(); togglePop(false); if (!sessionId) newChat().catch(e => showError(e.message));
+});
+$("keyClear").addEventListener("click", () => { store.set("apiKey", ""); store.set("accessCode", ""); renderKey(); });
+$("accessCode").addEventListener("keydown", e => { if (e.key === "Enter") $("keySave").click(); if (e.key === "Escape") togglePop(false); });
 $("apiKey").addEventListener("keydown", e => { if (e.key === "Enter") $("keySave").click(); if (e.key === "Escape") togglePop(false); });
 document.addEventListener("click", e => { if (!e.target.closest(".popover-wrap")) togglePop(false); });
 document.querySelectorAll("[data-consent]").forEach(b => b.addEventListener("click", () => {
@@ -690,6 +710,10 @@ $("newChat").addEventListener("click", newChat);
   try {
     cfg = await api("/api/config");
     renderKey(); renderConsent();
+    $("todayLabel").textContent = `date ${cfg.today}` + ({demo: " (demo)", real: " (real)", fixed: " (fixed)"}[cfg.today_mode] || "");
+    $("inspMode").textContent = cfg.debug_inspector ? "debug view" : "test view";
+    $("input").maxLength = cfg.limits.max_message_chars;
+    if (cfg.access_required && !store.get("accessCode")) { togglePop(true); return; }
     const params = new URLSearchParams(location.search);
     if (["light", "dark"].includes(params.get("theme"))) document.documentElement.dataset.theme = params.get("theme");
     const wanted = params.get("session") || store.get("sessionId");

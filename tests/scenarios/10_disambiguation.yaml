@@ -1,6 +1,12 @@
 name: Two January healthcare claims - ask, then select
+# CL-2011: closed (settled), expected reimbursement / net pay $780.00, allowed max $800.00
 turns:
   - say: "Margaret Chen, 1985-03-15, SSN 4472. I have a question about my healthcare claim from January."
     expect: {phase: RESOLVE_INTENT, verified: true, candidates: [CL-2048, CL-2011]}
-  - say: "The one from 2025."
-    expect: {phase: PROCESS_CASE, selected_case: CL-2011}
+  - say: "The one from 2025. How much did you pay on it?"
+    expect:
+      phase: PROCESS_CASE
+      selected_case: CL-2011
+      reply_mentions_any: ["$780"]
+      amounts_allowed: ["780.00", "800.00"]
+      reply_not_matching: ['(?i)(paid|payment|reimburs\w*)[^.$]{0,30}\$\s?800']

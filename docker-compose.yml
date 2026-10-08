@@ -6,7 +6,4 @@ services:
     env_file:
       - path: .env
         required: false
-    environment:
-      # Demo date keeps CL-2048's appeal window open; override in .env or the shell
-      SOP_TODAY: ${SOP_TODAY:-2026-03-01}
     restart: unless-stopped

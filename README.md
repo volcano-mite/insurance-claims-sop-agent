@@ -55,12 +55,21 @@ An invalid key is reported in the chat instead of failing silently, and the turn
 | `LLM_MODEL_EXTRACTOR` | `deepseek-chat` | Model for per-turn structured extraction (JSON mode). |
 | `LLM_MODEL_RESPONDER` | `deepseek-chat` | Model for replies, tool calls and the email summary. |
 | `LLM_TIMEOUT` | `60` | Seconds per LLM request. |
-| `SOP_TODAY` | `2026-03-01` in `.env.example` and Docker Compose; real current date if unset | "Today" used for deadline checks. Leave empty to use the real date. |
-| `VERIFY_MIN_FIELDS` | `3` | Number of matching identity fields required to verify. |
+| `SOP_TODAY` | empty (demo date `2026-03-01`) | "Today" used for deadline checks: empty or `demo` = 2026-03-01, `real` = the system date, or a fixed `YYYY-MM-DD`. The same default applies however the app is started, and the UI header shows the date in use. |
+| `VERIFY_MIN_FIELDS` | `3` | Number of matching identity fields required to verify. Must be 3 to 5; the requirement is at least 3. |
 | `MAX_VERIFY_FAILURES` | `3` | Failed verification attempts before human handoff. |
 | `MAX_OFF_TOPIC` | `3` | Consecutive out-of-scope questions before offering a human. |
 | `PERSUASION_BUDGET` | `3` | Turns of pushback on verification before handing off to a human. |
 | `CONSENT_SCENARIO` | `default` | Default consent simulation for representative callers (`default` or `timeout`). Can be changed per chat in the UI. |
+| `DEBUG_INSPECTOR` | `false` | Show which identity field matched or failed in the inspector. For local testing only. |
+| `ACCESS_TOKEN` | — | If set, the UI asks for this code and every session and chat request must carry it. |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Session and chat requests per client IP per minute. |
+| `SESSION_TTL_MINUTES` | `30` | Idle sessions are deleted after this long. |
+| `MAX_SESSIONS` | `200` | Sessions kept in memory; the least recently used are dropped first. |
+| `MAX_MESSAGE_CHARS` | `2000` | Longest accepted caller message. |
+| `MAX_TURNS` | `60` | Messages per conversation before a new chat is required. |
+
+Invalid values (for example `VERIFY_MIN_FIELDS=2` or a malformed `SOP_TODAY`) stop the server at startup with a message naming the setting.
 
 ---
 
@@ -71,7 +80,11 @@ The page has two panes:
 - **Chat** (left): talk to the agent in natural language. The *Try a scenario* chips send sample messages (hover to see the full text). Small markers between messages show what the SOP did on that turn: gate held, identity verified, claim selected, tools looked up, guard blocked a reply, transferred to a human, email sent.
 - **SOP Inspector** (right): the workflow stepper, the identity gate (which fields matched or did not), remembered memory slots, guardrail counters, the detected emotion, the email outbox, and a collapsible trace of every extraction, plan, tool call and guard decision. It is a testing aid; a real caller would not see it.
 
-The *Consent* switch in the top bar chooses how the simulated policyholder responds when a representative calls (*Approves* or *Times out*); switching starts a new chat. The key button shows whether an API key is available and lets you enter one. Reloading the page keeps the current conversation. The page follows the system light or dark theme.
+The *Consent* switch in the top bar chooses how the simulated policyholder responds when a representative calls (*Approves* or *Times out*); switching starts a new chat. The header shows the date used for deadline checks.
+
+Three parts of the workflow are simulated, and the UI labels them that way: the human handoff (it ends the chat with a reference number, but no live agent is connected), the email summary (written to the *Test outbox* panel, never emailed), and the policyholder's consent for representative callers.
+
+Before verification, the inspector shows which identity fields were provided but not which ones matched, because that would let anyone probe the records. Set `DEBUG_INSPECTOR=true` locally to see per-field results. The key button shows whether an API key is available and lets you enter one. Reloading the page keeps the current conversation. The page follows the system light or dark theme.
 
 ### Test personas
 
@@ -112,16 +125,19 @@ On each turn:
 2. **Session memory:** stores everything it extracted, so details mentioned early (e.g. "my denied claim from January") are used later.
 3. **SOP controller (code):** checks identity against the fixtures, moves between phases, counts failures, refusals and off-topic turns, and decides when to escalate. It outputs a list of directives for the reply.
 4. **Responder (LLM):** turns the directives into a natural reply. It only sees the data the current phase allows. Before verification, no claim data is in its context at all.
-5. **Output guards (code):**
-   - *Leak guard:* blocks claim IDs, amounts or denial reasons before verification, and other callers' claims after it. A blocked reply is replaced by a safe fixed message.
-   - *State-consistency check:* catches replies that contradict the SOP state, such as saying "details don't match" after verification succeeded, or "you're verified" before it. The reply is regenerated once with a correction note, then replaced by a fixed message if it is still wrong. The prompt also states the current verification status explicitly, so earlier "didn't match" messages in the conversation don't mislead the model.
+5. **Output checks (code):** every draft passes four checks before the caller sees it. A draft that fails is regenerated once with a note saying what was wrong. If the second draft only fails grounding, its unsupported sentences are removed and the rest is used if it passes every check; otherwise a fixed reply built from the controller's directives is used. Rejected drafts are never shown or returned by the API.
+   - *Disclosure guard:* before verification, rejects anything that reads as claim information: claim IDs, money amounts, dates from claim records, document names, "missing documents", explanations of a decision ("denied because…") and status statements, including confirming the caller's own guess ("Is CL-2048 denied?" → "Yes" or "CL-2048 was denied" is rejected; "I can check that once you're verified" is fine). After verification, rejects other callers' claims.
+   - *Grounding check* ([grounding.py](app/sop/grounding.py)): after verification, each statement must match the trusted data **for what it claims to be**, not just contain a number seen somewhere. An amount called a reimbursement must equal a reimbursement field (so the $1,450 allowed maximum can't be presented as a payout); a time span must match a duration in the guidance or the days until a deadline; a date called a deadline must be an appeal deadline; a stated status must match the record; a denial explanation must match the recorded reason; outcome promises are never grounded. Trusted data is claim records, guidance and tool results. What the caller said is kept apart: the agent may mention or dispute it ("there's no $9,999 on this claim") but not agree with it.
+   - *State-consistency check:* catches replies that contradict the SOP state, such as "details don't match" after verification succeeded, or "you're verified" before it. The prompt also states the current verification status explicitly.
+   - *Required steps:* a reply must not drop a must-say element of its directives: the email-summary offer, the transfer reference number, or the confirmation that the email was sent.
+6. **Recovery:** if anything fails unexpectedly during a turn, the session is restored to its state before the turn and the caller is asked to send the message again. Tool calls from the model are validated against a schema; malformed arguments are returned to the model as an error instead of failing the turn.
 
 | Phase | Decided in code | LLM freedom | LLM tools |
 |---|---|---|---|
 | VERIFY_ID | identity match (≥3 of name, DOB, phone, email, ID last 4), failure lockout, representative authorization and consent | Phrasing, empathy | none |
 | RESOLVE_INTENT | claim matching from remembered hints | Interpreting which claim and what need; disambiguation | none |
 | PROCESS_CASE | claim ownership checks on every tool call | Multi-step reasoning grounded in tool results | `get_claim`, `list_claims`, `get_document_guidance`, `get_followup_guidance` |
-| POST_PROCESS | send only after the caller agrees, only to the email on file | Writing the summary | none |
+| POST_PROCESS | send only after the caller agrees, only to the email on file; summary checked for identity details and ungrounded facts | Writing the summary | none |
 
 Escalation to a human is available in every phase: on request, after repeated failed verification or refusal, after repeated off-topic questions (offered), or when a representative's consent times out.
 
@@ -129,7 +145,11 @@ Escalation to a human is available in every phase: on request, after repeated fa
 
 - Verification needs at least 3 matching fields and no mismatches. The policy number helps find the account but does not count.
 - Names match aliases and reordered or joined spellings. Phones and dates of birth are matched across common formats.
-- On a mismatch, the agent never says which field was wrong. All provided fields are cleared and the caller is asked again.
+- On a mismatch, the agent never says which field was wrong, and neither does the API. All provided fields are cleared and the caller is asked again.
+
+### Email summary
+
+The summary is written after the turn's reply, so a request like "tell me what to send, then email me the summary" gets a summary that includes that answer. The summary model gets the facts of every claim discussed and the conversation from the verification turn onward, with dates of birth, ID digits, phone numbers and email addresses masked. Its draft is rejected if it contains any of the caller's identity details or fails the grounding check against the claim records and guidance. A rejected draft is replaced by a template built from the same structured data: what was discussed, each claim's status and denial reason, the appeal deadline, and next steps (documents and their requirements, what to do if one is unavailable, how to submit, processing time).
 - A representative must be on file for the policyholder and the policyholder must approve a consent request before anything is shared.
 
 ---
@@ -143,9 +163,9 @@ pytest tests/scenarios -m llm           # end-to-end conversations, needs DEEPSE
 SCENARIO_RUNS=3 pytest tests/scenarios  # repeat each scenario to check stability
 ```
 
-Unit tests cover verification, claim matching, guidance mapping, the state machine, the output guard and the HTTP API, using a scripted fake LLM where needed.
+Unit tests cover verification, claim matching, guidance mapping, the state machine, the output checks, email privacy, tool-argument validation, turn rollback, configuration validation and the HTTP API limits, using a scripted fake LLM where needed.
 
-Scenario tests in [`tests/scenarios/`](tests/scenarios/) are YAML conversations. They check **state**, not exact wording: the current phase, whether data leaked, which case was selected, and whether the conversation escalated. Covered: the official demo, partial or refused ID fields, national-ID callers, name and email aliases, verification lockout, representative consent (approved and timeout), an angry caller, repeated off-topic questions, claim disambiguation, prompt injection, and accepting or declining the email.
+Scenario tests in [`tests/scenarios/`](tests/scenarios/) are YAML conversations. They check state and content, not exact wording. Expected facts are written in each YAML file and checked without the app's own guards: which dollar amounts may appear, required words (documents, deadlines), forbidden phrasings as regular expressions (e.g. $1,450 described as a reimbursement, "Yes" to a status guess before verification), and what the email must and must not contain. Every verified reply is additionally run through the grounding check. Covered: the official demo, partial or refused ID fields, national-ID callers, name and email aliases, verification lockout, representative consent (approved and timeout), an angry caller, repeated off-topic questions, claim disambiguation, prompt injection, accepting or declining the email, asking a question and ending in the same message (right after verification, mid-conversation, and together with the email request), a status guess before verification, and a caller asserting an amount.
 
 ---
 
@@ -153,7 +173,7 @@ Scenario tests in [`tests/scenarios/`](tests/scenarios/) are YAML conversations.
 
 ```
 app/
-  sop/          state_machine.py (controller), gates.py (data visibility and output guard), policies.py (tone, escalation)
+  sop/          state_machine.py (controller), gates.py (data visibility, disclosure guard), grounding.py (field-aware fact checks), policies.py (tone, escalation)
   llm/          client.py (DeepSeek), extractor.py, responder.py (replies, tool loop, email summary), prompts.py
   tools/        verification.py, claims.py, guidance.py, consent.py, email.py
   agent.py      one conversational turn
@@ -164,10 +184,21 @@ insurance_claims/fixtures/   sample data
 tests/          unit/ and scenarios/
 ```
 
+## Deploying publicly
+
+The defaults suit a local demo. Before putting it on the internet:
+
+- Set `ACCESS_TOKEN` so strangers can't spend the server's API key, and share the code only with testers. Callers can also be asked to bring their own key by leaving `DEEPSEEK_API_KEY` unset.
+- Keep `DEBUG_INSPECTOR=false`.
+- Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` (read by uvicorn) to the proxy's address so rate limiting sees real client IPs instead of the proxy's.
+- Sessions, rate-limit counters and the outbox live in one process's memory. Run a single instance, or move them to a shared store first.
+
 ## Known limitations
 
 - All data is read from local JSON fixtures. There is no real claims system or authentication backend.
-- Sessions live in server memory and are lost on restart.
-- Emails go to an in-app outbox; nothing is sent over SMTP.
+- Sessions live in server memory, expire after `SESSION_TTL_MINUTES` of inactivity and are lost on restart.
+- The human handoff is simulated: the conversation ends with a reference number, but no agent is connected.
+- Emails go to an in-app test outbox; nothing is sent over SMTP.
 - The consent flow is simulated from `consent_scenarios.json`: each caller message after the request checks the status once.
-- The demo date defaults to `SOP_TODAY=2026-03-01` so CL-2048's appeal window (deadline 2026-03-18) is still open. With the real date, the deadline has passed and the agent says so and suggests a human representative.
+- The output checks are pattern-based (English wording, numbers written as digits). They catch the common ways a reply can leak, misstate or invent facts, but they are a second line of defense; the first is that the model never receives data the phase doesn't allow.
+- The demo date defaults to 2026-03-01 so CL-2048's appeal window (deadline 2026-03-18) is still open. With `SOP_TODAY=real`, the deadline has passed and the agent says so and suggests a human representative.

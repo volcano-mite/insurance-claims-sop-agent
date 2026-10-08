@@ -127,12 +127,23 @@ PHASE_GUIDANCE = {
         "Reason freely to connect facts "
         "into a clear answer, but state only grounded facts. Explain amounts using amount_field_definitions. "
         "If appeal_deadline_passed is true, say so plainly and suggest a human representative to review "
-        "options. End by checking whether there is anything else you can help with on this claim."
+        "options. Never promise an outcome (approval, payment, a reversed denial). End by checking whether "
+        "there is anything else you can help with on this claim, unless the DIRECTIVES offer an email summary or "
+        "say goodbye: then end with that instead."
     ),
     Phase.POST_PROCESS: (
         "The caller's questions are handled. Offer the email summary and respect their choice."
     ),
 }
+
+
+def prompt_phase(phase: Phase, plan: TurnPlan) -> Phase:
+    """The phase whose guidance applies to this reply.
+
+    A caller can ask a question and say they are done in one message; the controller then
+    answers and moves to POST_PROCESS in the same turn, and the answer needs PROCESS_CASE guidance.
+    """
+    return Phase.PROCESS_CASE if plan.has("ANSWER_CASE_QUESTION") else phase
 
 
 def _render(d: dict) -> str:
@@ -208,7 +219,8 @@ def _render(d: dict) -> str:
     if k == "EMAIL_SKIPPED":
         return "Confirm that no email will be sent."
     if k == "GOODBYE":
-        return "Close the conversation warmly and briefly."
+        return ("The conversation is ending: close it warmly and briefly. Do not ask whether there is anything "
+                "else or invite more questions.")
     if k == "DECLINE_OFF_TOPIC":
         return (f"The caller asked something unrelated ({d.get('topic') or 'off-topic'}). Politely say you can only "
                 "help with insurance claims and account questions, without answering it, then steer back.")

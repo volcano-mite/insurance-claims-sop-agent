@@ -1,0 +1,6 @@
+name: Verify, ask and say goodbye in one message - answer, then offer the email in the same reply
+turns:
+  - say: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. Can you tell me the status of my auto claim? That's all I needed."
+    expect: {phase: POST_PROCESS, verified: true, selected_case: CL-2102, reply_mentions_all: [email], reply_mentions_any: [open, progress]}
+  - say: "No thanks, skip the email."
+    expect: {phase: ENDED, email_sent: false}

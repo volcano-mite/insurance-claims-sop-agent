@@ -1,0 +1,12 @@
+name: Ask why, end and request the email in one message - answer first, email includes the answer
+turns:
+  - say: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. It's about my denied healthcare claim from January."
+    expect: {phase: PROCESS_CASE, selected_case: CL-2048}
+  - say: "What exactly do I need to send? Then please email me the summary, that's all."
+    expect:
+      phase: ENDED
+      email_sent: true
+      reply_mentions_all: [pathology, office note]
+      email_no_pii: true
+      email_mentions_all: [pathology, office note, CL-2048]
+      email_amounts_allowed: ["0.00", "1450.00"]

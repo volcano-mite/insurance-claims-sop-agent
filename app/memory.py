@@ -11,6 +11,10 @@ from pydantic import BaseModel, field_validator
 from app.tools.consent import ConsentRequest
 from app.tools.verification import COUNTED_FIELDS, FIELD_LABELS
 
+MAX_TRACE = 500
+# Trace fields that reveal per-field identity matches or the text of rejected replies.
+DEBUG_ONLY_TRACE_KEYS = {"matched", "mismatched", "rejected_reply"}
+
 INTENTS = ("status_inquiry", "denial_question", "document_submission", "next_steps", "general_claim_question")
 EMOTIONS = ("none", "frustration", "anxiety", "anger", "confusion", "refusal")
 MONTHS = ("january", "february", "march", "april", "may", "june", "july",
@@ -32,6 +36,19 @@ def _none_if_blank(v: Any) -> Any:
     if isinstance(v, str) and v.strip().lower() in ("", "null", "none", "n/a", "unknown"):
         return None
     return v
+
+
+def _int_in_range(v: Any, lo: int, hi: int) -> int | None:
+    """Model output is untrusted: anything that isn't a whole number in range becomes None."""
+    if isinstance(v, bool):
+        return None
+    try:
+        n = int(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if isinstance(v, float) and v != n:
+        return None
+    return n if lo <= n <= hi else None
 
 
 class Identity(BaseModel):
@@ -66,20 +83,15 @@ class CaseHints(BaseModel):
         v = _none_if_blank(v)
         if isinstance(v, str):
             low = v.strip().lower()
-            for i, name in enumerate(MONTHS, 1):
-                if name.startswith(low[:3]) and len(low) >= 3:
-                    return i
-            return int(low) if low.isdigit() else None
-        return v if v is None or 1 <= int(v) <= 12 else None
+            if len(low) >= 3 and not low.isdigit():
+                return next((i for i, name in enumerate(MONTHS, 1) if name.startswith(low[:3])), None)
+            v = low
+        return _int_in_range(v, 1, 12)
 
     @field_validator("year", mode="before")
     @classmethod
     def _year(cls, v):
-        v = _none_if_blank(v)
-        try:
-            return None if v is None else int(v)
-        except (TypeError, ValueError):
-            return None
+        return _int_in_range(_none_if_blank(v), 1900, 2100)
 
     def present(self) -> dict:
         return {k: v for k, v in self.model_dump().items() if v not in (None, "")}
@@ -132,12 +144,12 @@ class Extraction(BaseModel):
     @field_validator("declined_fields", mode="before")
     @classmethod
     def _declined(cls, v):
-        return [f for f in (v or []) if f in COUNTED_FIELDS]
+        return [f for f in v if f in COUNTED_FIELDS] if isinstance(v, list) else []
 
     @field_validator("identity", "case_hints", mode="before")
     @classmethod
     def _obj(cls, v):
-        return v or {}
+        return v if isinstance(v, dict) else {}
 
 
 # ---------------------------------------------------------------- turn plan
@@ -175,6 +187,7 @@ class Session:
     relationship: Optional[str] = None
     declined_fields: list[str] = field(default_factory=list)
     verified_party_id: Optional[str] = None
+    verified_at_history: Optional[int] = None  # index of the caller message that completed verification
     verify_failures: int = 0
     last_verification: dict = field(default_factory=dict)
     consent: Optional[ConsentRequest] = None
@@ -185,6 +198,7 @@ class Session:
     candidate_case_ids: list[str] = field(default_factory=list)
     selected_case_id: Optional[str] = None
     topics_discussed: list[str] = field(default_factory=list)
+    cases_discussed: list[str] = field(default_factory=list)
 
     # Guardrails
     off_topic_streak: int = 0
@@ -201,12 +215,21 @@ class Session:
 
     def log(self, event: str, **data: Any) -> None:
         self.trace.append({"turn": self.turn, "event": event, **data})
+        del self.trace[:-MAX_TRACE]
 
     def identity_labels(self) -> list[str]:
         return [FIELD_LABELS[k] for k in COUNTED_FIELDS if self.identity.get(k)]
 
-    def snapshot(self) -> dict:
-        """State for the debug panel. A testing aid, not something a caller would see."""
+    def snapshot(self, debug: bool = False) -> dict:
+        """State for the inspector panel.
+
+        Without debug, nothing in it tells an unverified caller which identity field matched,
+        and the text of replies the guards rejected is left out (it may contain what they blocked).
+        """
+        last_check = self.last_verification if debug else (
+            {"verified": self.last_verification["verified"]} if self.last_verification else {})
+        trace = self.trace if debug else [
+            {k: v for k, v in e.items() if k not in DEBUG_ONLY_TRACE_KEYS} for e in self.trace]
         return {
             "session_id": self.id,
             "phase": self.phase.value,
@@ -217,7 +240,7 @@ class Session:
                 "representative": self.rep_name,
                 "fields_provided": {k: self.identity.get(k) for k in (*COUNTED_FIELDS, "policy_number")
                                     if self.identity.get(k)},
-                "last_check": self.last_verification,
+                "last_check": last_check,
                 "declined_fields": self.declined_fields,
                 "failures": self.verify_failures,
                 "consent": self.consent.to_dict() if self.consent else None,
@@ -228,6 +251,7 @@ class Session:
                 "candidate_case_ids": self.candidate_case_ids,
                 "selected_case_id": self.selected_case_id,
                 "topics_discussed": self.topics_discussed,
+                "cases_discussed": self.cases_discussed,
             },
             "guardrails": {
                 "off_topic_streak": self.off_topic_streak,
@@ -238,5 +262,6 @@ class Session:
             },
             "email_decision": self.email_decision,
             "outbox": self.outbox,
-            "trace": self.trace[-200:],
+            "trace": trace[-200:],
+            "debug": debug,
         }

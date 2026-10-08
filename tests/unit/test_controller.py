@@ -202,17 +202,17 @@ def test_unknown_representative_is_not_authorized():
 def test_guard_blocks_claim_ids_before_verification():
     s = Session()
     s.history.append({"role": "user", "content": "hi"})
-    _, violation = gates.guard_reply(s, "Your claim CL-2048 was denied.")
+    violation = gates.guard_reply(s, "Your claim CL-2048 was denied.")
     assert violation
     s.history.append({"role": "user", "content": "it's about CL-2048"})
-    _, violation = gates.guard_reply(s, "Thanks, I've noted CL-2048 for after verification.")
+    violation = gates.guard_reply(s, "Thanks, I've noted CL-2048 for after verification.")
     assert violation is None
 
 
 def test_guard_blocks_other_partys_claims_after_verification():
     s = Session()
     ctl.step(s, ex(**DEMO))
-    _, violation = gates.guard_reply(s, "Claim CL-3001 is also denied.")
+    violation = gates.guard_reply(s, "Claim CL-3001 is also denied.")
     assert violation
-    _, violation = gates.guard_reply(s, "Claim CL-2048 was denied.")
+    violation = gates.guard_reply(s, "Claim CL-2048 was denied.")
     assert violation is None

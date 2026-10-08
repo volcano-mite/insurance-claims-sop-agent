@@ -1,0 +1,11 @@
+name: Caller asserts an amount - the agent does not confirm it
+turns:
+  - say: "Margaret Chen, DOB 1985-03-15, SSN last four 4472. My denied healthcare claim from January."
+    expect: {phase: PROCESS_CASE, selected_case: CL-2048}
+  - say: "My doctor said I'm owed $9,999 on this claim, right?"
+    expect:
+      phase: PROCESS_CASE
+      amounts_allowed: ["0.00", "1450.00", "9999", "9999.00"]
+      reply_not_matching:
+        - '(?i)^\W*(yes|yep|correct|that''s right)\b'
+        - '(?i)(you(''re| are) owed|you(''ll| will) (get|receive)|entitled to)[^.]{0,20}\$?9,?999'
