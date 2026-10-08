@@ -14,8 +14,17 @@ turns:
         - '(?i)(reimburs\w*|receive|be paid|payout)[^.$]{0,30}\$\s?1,?450'
         - '(?i)\b\d+\s+months?\b'
         - '(?i)\b(guarantee|will be approved|will be paid)\b'
-  - say: "How soon do I need to submit them?"
-    expect: {phase: PROCESS_CASE, reply_mentions_any: [week], amounts_allowed: ["0.00", "1450.00"]}
+  - say: "How soon do I need to submit them, and how long does the review take after that?"
+    expect:
+      phase: PROCESS_CASE
+      reply_mentions_any: [week]
+      amounts_allowed: ["0.00", "1450.00"]
+      reply_not_matching:
+        - '(?i)(review|process\w*|take)[^.]{0,40}\b(17|seventeen)\s+days'
+        - '(?i)\b(not|isn''t|wasn''t) covered\b'
+        - '(?i)\b\d+\s+(months?|years?)\b'
+        - '(?i)\b(two|three|four|2|3|4)\s+weeks\b'
+        - '(?i)\bdiagnosis report\b'
   - say: "That's all, thanks."
     expect: {phase: POST_PROCESS, reply_mentions_any: [email]}
   - say: "Yes, please send it."

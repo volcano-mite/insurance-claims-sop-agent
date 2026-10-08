@@ -47,6 +47,7 @@ def evidence(s: Session) -> grounding.Evidence:
     ("CL-2048 is approved.", "status 'approved' for CL-2048 (recorded: denied)"),
     ("Your claim has been paid.", "status 'paid' for CL-2048 (recorded: denied)"),
     ("Your appeal deadline is January 12, 2026.", "date 2026-1-12"),
+    ("The allowed maximum didn't matter here; your reimbursement is $1,450.00.", "amount 1450.00 stated as reimbursement"),
 ])
 def test_values_must_match_the_field_they_are_described_as(reply, problem):
     found = grounding.violations(reply, evidence(verified()))
@@ -56,7 +57,7 @@ def test_values_must_match_the_field_they_are_described_as(reply, problem):
 def test_caller_statements_are_not_evidence():
     s = verified("I should get $9999 back for this")
     ev = evidence(s)
-    assert grounding.violations("Yes, you're owed $9,999.", ev) == ["amount 9999 stated as reimbursement"]
+    assert grounding.violations("Yes, you're owed $9,999.", ev) == ["amount 9999 stated as reimbursement for CL-2048"]
     assert grounding.violations("That's right, the $9,999 is correct.", ev)
     # acknowledging without confirming is fine
     assert grounding.violations("You mentioned $9,999, but I don't see that amount on this claim.", ev) == []
@@ -78,7 +79,7 @@ def test_each_date_gets_its_own_role():
     reply = "Your claim from January 12, 2026 was denied, and the appeal deadline is March 18, 2026."
     assert grounding.violations(reply, ev) == []
     assert grounding.violations("Filed March 18, 2026; the appeal deadline is January 12, 2026.", ev) == [
-        "date 2026-3-18", "date 2026-1-12"]
+        "date 2026-3-18 for CL-2048", "date 2026-1-12 for CL-2048"]
 
 
 def test_denial_reason_from_claim_list_summary():
@@ -270,3 +271,142 @@ def test_leaks_are_never_pruned_only_replaced():
     s = agent.new_session()
     reply = agent.handle(s, "why was it denied")
     assert "CL-2048" not in reply and not any(e["event"] == "pruned_reply" for e in s.trace)
+
+
+# ---------------------------------------------------------------- third review: binding, purposes, controlled reasons
+
+def two_claim_evidence() -> grounding.Evidence:
+    """CL-2048 selected, with CL-3001 and CL-2011 records also in the evidence."""
+    from app.tools import claims
+    ev = evidence(verified())
+    for party, cid in (("P12", "CL-3001"), ("P9", "CL-2011")):
+        ev.add(claims.claim_facts(claims.get_claim(party, cid), date(2026, 3, 1)))
+    return ev
+
+
+@pytest.mark.parametrize("reply", [
+    "CL-2048's allowed maximum is $1,200.00.",                 # CL-3001's maximum
+    "The appeal deadline for CL-2048 is April 15, 2026.",      # CL-3001's deadline
+    "Your allowed maximum is $1,200.00.",                      # unbound -> the selected claim
+    "CL-2011 was settled. Its allowed maximum was $1,450.00.", # carries CL-2011 into the next sentence
+])
+def test_values_are_bound_to_the_claim_they_describe(reply):
+    assert grounding.violations(reply, two_claim_evidence()), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "CL-3001's appeal deadline is April 15, 2026 and its allowed maximum is $1,200.00.",
+    "CL-2011 was settled. Its allowed maximum was $800.00 and it paid $780.00.",
+    "CL-2048 has an allowed maximum of $1,450.00; CL-2011 had $800.00.",
+    "CL-2011 - Net pay (the finalized amount paid): $780.00 - Allowed maximum (the most an in-network insurer "
+    "would pay for the covered service): $800.00",
+])
+def test_values_bound_to_the_right_claim_pass(reply):
+    assert grounding.violations(reply, two_claim_evidence()) == [], reply
+
+
+@pytest.mark.parametrize("reply", [
+    "Review takes 17 days.",                 # 17 = days left to appeal, not review time
+    "Review takes seven years.",             # word numbers are checked too
+    "Processing usually takes two weeks.",
+    "You have 30 days left to appeal.",      # actual: 17
+    "Please submit the documents within ten days.",
+])
+def test_durations_are_checked_by_purpose(reply):
+    assert grounding.violations(reply, evidence(verified())), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "You have 17 days left to appeal.",
+    "That gives you about two weeks before the deadline.",
+    "The deadline is March 18, 2026, which is 17 days from today.",
+    "Processing usually takes less than a week.",
+    "Please submit the documents within a week.",
+    "Review restarts once the files arrive, and usually takes less than a week.",
+])
+def test_durations_with_the_right_purpose_pass(reply):
+    assert grounding.violations(reply, evidence(verified())) == [], reply
+
+
+@pytest.mark.parametrize("reply,ok", [
+    ("Good luck getting those documents submitted before the March 18 deadline.", True),
+    ("Make sure everything is received before the March 18, 2026 appeal deadline.", True),
+    ("Good luck getting those documents submitted before the January 12 deadline.", False),
+    ("Your claim was filed on March 18, 2026.", False),
+])
+def test_date_role_from_words_after_the_date(reply, ok):
+    assert (grounding.violations(reply, evidence(verified())) == []) == ok, reply
+
+
+@pytest.mark.parametrize("reply", [
+    "The claim was denied because the pathology report showed the treatment isn't covered.",
+    "The pathology report shows this treatment isn't covered by your plan.",
+    "It was denied because the pathology report was missing, which means the procedure is excluded.",
+    "CL-2048 was denied because the diagnosis report was missing.",   # not on CL-2048's list
+    "The reason for the denial is that the pathology report was reviewed.",
+    "Your claim was denied because the procedure was not medically necessary.",
+])
+def test_denial_reason_is_a_controlled_fact(reply):
+    assert grounding.violations(reply, evidence(verified())), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "It was denied because the review file didn't include the pathology report and the office note.",
+    "CL-2048 was denied due to missing documents.",
+    "The claim was denied because the pathology report and treating provider office note weren't submitted.",
+    "Reason for the denial: the office note and pathology report were not in the file.",
+    "It was denied because the pathology report and office note weren't in the review file.",
+])
+def test_correct_denial_reasons_pass(reply):
+    assert grounding.violations(reply, evidence(verified())) == [], reply
+
+
+# ---------------------------------------------------------------- fourth review: negated reasons, unknown documents, duration qualifiers
+
+@pytest.mark.parametrize("reply", [
+    "CL-2048 was denied because the police report was missing.",       # not a document CL-2048 needs
+    "It was denied because the medical records were missing.",
+    "CL-2048 was denied because the doctor's note was missing.",        # unconfirmed name is not grounded
+    "The claim was denied because the pathology report was not missing.",
+    "CL-2048 was denied because the pathology report wasn't missing.",
+    "It was denied because nothing was missing.",
+    "The reason for the denial is that the pathology report was submitted.",
+])
+def test_denial_reason_names_and_negation(reply):
+    assert grounding.violations(reply, evidence(verified())), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "CL-2048 was denied because the original pathology report and the office note were missing.",
+    "It was denied because there was no pathology report in the file.",
+    "It was denied because the report and the note were missing.",
+    "CL-2048 was denied because the required documents were not submitted.",
+])
+def test_denial_reason_with_recorded_documents_passes(reply):
+    assert grounding.violations(reply, evidence(verified())) == [], reply
+
+
+# The guidance says review "usually" takes "less than a week" (calendar days, 0-6 days).
+@pytest.mark.parametrize("reply", [
+    "Review takes 7 business days.",                     # business days are not calendar days
+    "Review usually takes less than 7 business days.",
+    "Review takes 7 days.",                              # "less than" dropped
+    "Review usually takes about a week.",
+    "Processing takes less than a week.",                # "usually" dropped
+    "Processing usually takes less than three days.",    # narrower than the data
+    "It usually takes less than a month to process.",    # stretches the upper end
+    "You have 17 business days left to appeal.",
+])
+def test_duration_kind_bound_and_hedge_are_checked(reply):
+    assert grounding.violations(reply, evidence(verified())), reply
+
+
+@pytest.mark.parametrize("reply", [
+    "Review typically takes under 7 days.",
+    "Processing usually takes no more than a week.",
+    "You have less than three weeks left to appeal.",
+    "You have 17 calendar days left to appeal.",
+    "Please submit within 7 days.",
+])
+def test_durations_implied_by_the_data_pass(reply):
+    assert grounding.violations(reply, evidence(verified())) == [], reply

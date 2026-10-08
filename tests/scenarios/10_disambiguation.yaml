@@ -9,4 +9,8 @@ turns:
       selected_case: CL-2011
       reply_mentions_any: ["$780"]
       amounts_allowed: ["780.00", "800.00"]
-      reply_not_matching: ['(?i)(paid|payment|reimburs\w*)[^.$]{0,30}\$\s?800']
+      reply_not_matching:
+        - '(?i)(paid|payment|reimburs\w*)[^.$]{0,30}\$\s?800'
+        - '\$\s?1,?450'
+        - '(?i)\bdenied\b[^.]*\bCL-?2011\b|\bCL-?2011\b[^.]*\bdenied\b'
+        - '(?i)March 18'

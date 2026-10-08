@@ -119,7 +119,7 @@ def test_ungrounded_amount_is_regenerated():
     reply = agent.handle(s, "Margaret Chen ...")
     assert "$1,450.00" in reply
     ev = next(e for e in s.trace if e["event"] == "ungrounded_reply")
-    assert ev["problems"] == ["amount 5000.00 stated as reimbursement"]
+    assert ev["problems"] == ["amount 5000.00 stated as reimbursement for CL-2048"]
 
 
 @pytest.mark.parametrize("reply,problem", [
@@ -130,7 +130,7 @@ def test_ungrounded_amount_is_regenerated():
 def test_grounding_flags_unbacked_facts(reply, problem):
     s = Session()
     Controller().step(s, Extraction.model_validate(DEMO_EX))
-    assert problem in grounding.violations(reply, grounding.for_session(s))
+    assert any(p.startswith(problem) for p in grounding.violations(reply, grounding.for_session(s)))
 
 
 @pytest.mark.parametrize("reply", [
