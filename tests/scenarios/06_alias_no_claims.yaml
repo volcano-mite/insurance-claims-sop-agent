@@ -1,0 +1,4 @@
+name: Name alias and alternate email; caller with no claims
+turns:
+  - say: "Yaven Li here. My email is yawen.li@example.com and my phone is 650-521-2830."
+    expect: {verified: true, phase: RESOLVE_INTENT}

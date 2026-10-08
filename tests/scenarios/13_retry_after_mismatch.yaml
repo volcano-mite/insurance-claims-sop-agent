@@ -1,0 +1,10 @@
+name: Wrong DOB, then correct details - replies must reflect verification (regression)
+turns:
+  - say: "I'm the policyholder. My name is Margaret Chen, policy POL-9921. I'm calling about my denied healthcare claim from January. DOB is 1985-03-18, SSN last four is 4472."
+    expect: {phase: VERIFY_ID, verified: false, no_claim_leak: true, consistent: true}
+  - say: "I'm the policyholder. My name is Margaret Chen, policy POL-9921. I'm calling about my denied healthcare claim from January. DOB is 1985-03-15, SSN last four is 4472."
+    expect: {phase: PROCESS_CASE, verified: true, selected_case: CL-2048, consistent: true, reply_mentions_any: [verified]}
+  - say: "I already told you who I am. This is ridiculous. Just tell me why my claim was denied."
+    expect: {phase: PROCESS_CASE, consistent: true, reply_mentions_any: [pathology, office note]}
+  - say: "I'm the policyholder. My name is Margaret Chen, policy POL-9921. DOB is 1985-03-15, SSN last four is 4472."
+    expect: {phase: PROCESS_CASE, verified: true, consistent: true}

@@ -1,0 +1,6 @@
+name: Two January healthcare claims - ask, then select
+turns:
+  - say: "Margaret Chen, 1985-03-15, SSN 4472. I have a question about my healthcare claim from January."
+    expect: {phase: RESOLVE_INTENT, verified: true, candidates: [CL-2048, CL-2011]}
+  - say: "The one from 2025."
+    expect: {phase: PROCESS_CASE, selected_case: CL-2011}

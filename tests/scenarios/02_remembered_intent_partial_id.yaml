@@ -1,0 +1,10 @@
+name: Intent stated before verification is remembered; partial answers; declined SSN
+turns:
+  - say: "Hi, I'm calling about my denied healthcare claim from January."
+    expect: {phase: VERIFY_ID, verified: false, no_claim_leak: true}
+  - say: "My name is Margaret Chen."
+    expect: {phase: VERIFY_ID, no_claim_leak: true}
+  - say: "Date of birth March 15, 1985."
+    expect: {phase: VERIFY_ID, no_claim_leak: true}
+  - say: "I'd rather not give my SSN. My email is margaret@email.com."
+    expect: {phase: PROCESS_CASE, verified: true, selected_case: CL-2048}

@@ -1,0 +1,4 @@
+name: Alternate ID type (national ID) and a document without specific guidance
+turns:
+  - say: "This is Ma Tian, national ID ending 6688, born September 10 1964. Why was my claim denied?"
+    expect: {phase: PROCESS_CASE, verified: true, selected_case: CL-3001, reply_mentions_any: [diagnosis]}

@@ -1,0 +1,8 @@
+name: Wrong details three times escalates without disclosing anything
+turns:
+  - say: "Margaret Chen, DOB 1985-03-15, SSN last four 1111."
+    expect: {phase: VERIFY_ID, verified: false, no_claim_leak: true}
+  - say: "Sorry, Margaret Chen, DOB 1985-03-16, last four 4472."
+    expect: {phase: VERIFY_ID, verified: false, no_claim_leak: true}
+  - say: "Margaret Chen, born 1984-03-15, SSN ends 4472."
+    expect: {phase: ESCALATED, escalation_reason: verification_failed, verified: false, no_claim_leak: true}

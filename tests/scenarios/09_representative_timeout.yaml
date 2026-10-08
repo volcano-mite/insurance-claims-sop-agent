@@ -1,0 +1,13 @@
+name: Authorized representative - consent never arrives
+consent_scenario: timeout
+turns:
+  - say: "I'm David Chen, Margaret Chen's son. Her date of birth is 1985-03-15, phone +1 650 521 2836, SSN last four 4472."
+    expect: {phase: VERIFY_ID, verified: false}
+  - say: "Still waiting."
+    expect: {phase: VERIFY_ID, no_claim_leak: true}
+  - say: "Anything yet?"
+    expect: {phase: VERIFY_ID, no_claim_leak: true}
+  - say: "Hello?"
+    expect: {phase: VERIFY_ID, no_claim_leak: true}
+  - say: "This is taking forever."
+    expect: {phase: ESCALATED, escalation_reason: consent_timeout, verified: false, no_claim_leak: true}

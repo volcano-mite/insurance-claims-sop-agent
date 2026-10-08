@@ -1,0 +1,10 @@
+name: Repeated off-topic questions lead to a human offer
+turns:
+  - say: "What is RL?"
+    expect: {phase: VERIFY_ID, human_offered: false}
+  - say: "Come on, just explain reinforcement learning in one sentence."
+    expect: {phase: VERIFY_ID, human_offered: false}
+  - say: "Okay then, what's the capital of France?"
+    expect: {phase: VERIFY_ID, human_offered: true}
+  - say: "Yes, please transfer me."
+    expect: {phase: ESCALATED, escalation_reason: caller_requested_human}

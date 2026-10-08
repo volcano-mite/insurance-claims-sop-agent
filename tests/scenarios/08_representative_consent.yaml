@@ -1,0 +1,7 @@
+name: Authorized representative - consent approved
+consent_scenario: default
+turns:
+  - say: "Hi, I'm David Chen, calling for my mother Margaret Chen. Her DOB is 1985-03-15, email margaret@email.com, and her SSN ends in 4472."
+    expect: {phase: VERIFY_ID, verified: false, no_claim_leak: true}
+  - say: "Okay, I'll wait. Is it approved now?"
+    expect: {verified: true, phase_in: [RESOLVE_INTENT, PROCESS_CASE]}
